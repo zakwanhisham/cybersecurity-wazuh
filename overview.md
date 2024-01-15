@@ -194,3 +194,366 @@ This diagrams below represents the wazuh components and data flow.
 - Communication takes place through secure channel (TCP or UDP), providing data encryption and compression in real-time.
 - Includes flow control mechanism to avoid **flooding**, **queueing events**, and **protecting network bandwidth**.
 - `Agent needs to be enroll before connecting to the server for the first time`
+
+---
+
+## Architecture
+
+- Wazuh architecture is based on agents (endpoints) which is running on monitored endpoints, that forward security data to a central server.
+- Supported agentless device such as:
+  - firewalls
+  - switches
+  - routers
+  - access point
+- Can actively submit log data via:
+  - Syslog
+  - SSH
+  - API
+- Central server can decodes and analyzes the incoming information and passes the results along to the `wazuh indexer` for indexing and storage.
+
+### What is wazuh indexer
+
+- Collection of one or more nodes that communicate with each other to perform read and write operation on indices.
+- Small deployment(do not require processing large amounts of data) can easily handled by a single-node cluster.
+- Multi-node cluster are recommended when there are many monitored endpoints (large volume of data is anticipated / high availability is required)
+
+### Production environment
+
+- Recommended to deploy the Wazuh server and Wazuh indexer to different hosts.
+- Filebeat is used to securely forward Wazuh alerts and archived events to the indexer cluster (single or multi-node) using `TLS` encryption.
+- Image below shows that the solution components and how server and the indexer nodes can be configured as clusters, providing load balancing and high availability.
+
+![deployment architecture](https://firebasestorage.googleapis.com/v0/b/test-agent-nwfy.appspot.com/o/deployment-architecture1.png?alt=media&token=12392839-f954-4f7e-8dd5-4ebdbadd0bc7)
+
+### Agent and server communication
+
+- Agent will continuously sends events to the server for analysis and threat detection.
+- Agent establishes a connection with the server service for agent connection (listen to port `1514` by default) to ship the data.
+- Server then decodes and rule-checks the received events, utilizing the analysis engine.
+- Event that trips the rules are then augmented with alert data such as **rule ID** and **rule name**.
+- Event can be spooled to one or both of these files:
+  - `/var/ossec/logs/archives/archives.json` contains all events whether they are tripped or not
+  - `/var/ossec/logs/alerts/alerts.json` contains only the events that tripped the rule with high enough priority
+- The message protocol uses AES encryption by default, with 128 bits per block and 256-bit keys (Blowfish encryption is optional).
+
+### Server and indexer communication
+
+- Server use `Filebeat`to send alert and event data to the Wazuh indexer, using TLS encryption.
+- `Filebeat` reads the server output data and sends it to the indexer ( listen to port `9200/TCP` by default)
+- Once data has been index, dashboard is used to mine and visualize the information
+
+- Dashboard then queries the Wazuh RESTful API (listen to port `55000/TCP` by default) to display the configuration and status-related information of the server and agents.
+- Can modify agents or server config settings through API calls.
+- The communication is encrypted with TLS and authenticated with username and password.
+
+### Required Ports
+
+| Component | Port      | Protocol      | Purpose                                       |
+| --------- | --------- | ------------- | --------------------------------------------- |
+| Server    | 1514      | TCP(default)  | Agent connection service                      |
+| Server    | 1514      | UDP(optional) | AGent connection service (disable by default) |
+| Server    | 1515      | TCP           | Agent enrollment service                      |
+| Server    | 1516      | TCP           | Wazuh cluster daemon                          |
+| Server    | 514       | UDP(default)  | Wazuh syslog collector (disable by default)   |
+| Server    | 514       | TCP(Optional) | Wazuh syslog collector (disable by default)   |
+| Server    | 55000     | TCP           | Server RESTful API                            |
+| ---       | ---       | ---           | ---                                           |
+| Indexer   | 9200      | TCP           | Indexer RESTful API                           |
+| Indexer   | 9300-9400 | TCP           | Indexer cluster communication                 |
+| ---       | ---       | ---           | ---                                           |
+| Dashboard | 443       | TCP           | Web user interface                            |
+
+### Archival data storage
+
+- Alerts and non-alert events are stored in files on the server, in addition to being send to the Indexer.
+- Can be written in JSON format(`.json`), or plain text format(`.log`)
+- Files are daily compressed and signed using **MD5**, **SHA1** and **SHA256** checksums.
+
+```bash
+root@wazuh-manager:/var/ossec/logs/archives/2022/Jan# ls -l
+```
+
+output:
+
+```bash
+total 176
+-rw-r----- 1 wazuh wazuh 234350 Jan  2 00:00 ossec-archive-01.json.gz
+-rw-r----- 1 wazuh wazuh    350 Jan  2 00:00 ossec-archive-01.json.sum
+-rw-r----- 1 wazuh wazuh 176221 Jan  2 00:00 ossec-archive-01.log.gz
+-rw-r----- 1 wazuh wazuh    346 Jan  2 00:00 ossec-archive-01.log.sum
+-rw-r----- 1 wazuh wazuh 224320 Jan  2 00:00 ossec-archive-02.json.gz
+-rw-r----- 1 wazuh wazuh    350 Jan  2 00:00 ossec-archive-02.json.sum
+-rw-r----- 1 wazuh wazuh 151642 Jan  2 00:00 ossec-archive-02.log.gz
+-rw-r----- 1 wazuh wazuh    346 Jan  2 00:00 ossec-archive-02.log.sum
+-rw-r----- 1 wazuh wazuh 315251 Jan  2 00:00 ossec-archive-03.json.gz
+-rw-r----- 1 wazuh wazuh    350 Jan  2 00:00 ossec-archive-03.json.sum
+-rw-r----- 1 wazuh wazuh 156296 Jan  2 00:00 ossec-archive-03.log.gz
+-rw-r----- 1 wazuh wazuh    346 Jan  2 00:00 ossec-archive-03.log.sum
+```
+
+- Two recommendation to backup the archive files:
+  - Cron jobs (Highly recommended)
+  - Rely on Wazuh Indexer
+
+---
+
+## Use cases
+
+| Endpoint security                                                                                                           | Threat intelligence                                                                                                        | Security operations                                                                                                   | Cloud securioty                                                                                                         |
+| --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| [Configuration assessment](https://documentation.wazuh.com/current/getting-started/use-cases/configuration-assessment.html) | [Threat hunting ](https://documentation.wazuh.com/current/getting-started/use-cases/threat-hunting.html)                   | [Incident response](https://documentation.wazuh.com/current/getting-started/use-cases/incident-response.html)         | [Container security](https://documentation.wazuh.com/current/getting-started/use-cases/container-security.html)         |
+| [Malware detection ](https://documentation.wazuh.com/current/getting-started/use-cases/malware-detection.html)              | [Log data analysis](https://documentation.wazuh.com/current/getting-started/use-cases/log-analysis.html)                   | [Regulatory compliance](https://documentation.wazuh.com/current/getting-started/use-cases/regulatory-compliance.html) | [Posture management](https://documentation.wazuh.com/current/getting-started/use-cases/posture-management.html)         |
+| [File integrity monitoring](https://documentation.wazuh.com/current/getting-started/use-cases/file-integrity.html)          | [Vulnerability detection ](https://documentation.wazuh.com/current/getting-started/use-cases/vulnerability-detection.html) | [IT hygiene](https://documentation.wazuh.com/current/getting-started/use-cases/it-hygiene.html)                       | [Workload protection](https://documentation.wazuh.com/current/getting-started/use-cases/cloud-workload-protection.html) |
+
+Can read more on the [Wazuh doc](https://documentation.wazuh.com/current/getting-started/use-cases/index.html)
+
+---
+
+## Installation guide
+
+- Indexer and server can be installed on a single host or can be distributed in cluster configurations.
+- There are two options to install
+
+  - Assistant (**We will use this one during our demo**)
+  - Manual
+
+- Here are the workflow that you need to follow:
+
+  ```
+  1. Indexer
+  2. Server
+  3. Dashboard
+  4. Agent
+  ```
+
+### Indexer
+
+- **_Check the requirement before proceed_**
+- [Requirements](https://documentation.wazuh.com/current/installation-guide/wazuh-indexer/index.html#requirements)
+
+#### Assistant
+
+1. Initial configuration
+
+- Download the wazuh installation assistant and the configuration file.
+
+  ```bash
+  curl -sO https://packages.wazuh.com/4.7/wazuh-install.sh
+  curl -sO https://packages.wazuh.com/4.7/config.yml
+  ```
+
+- Edit `./config.yml` file and replace the node names and IP values with the corresponding names and IP address.
+
+```yaml
+nodes:
+  # Wazuh indexer nodes
+  indexer:
+    - name: node-1
+      ip: "<indexer-node-ip>"
+    #- name: node-2
+    #  ip: "<indexer-node-ip>"
+    #- name: node-3
+    #  ip: "<indexer-node-ip>"
+
+  # Wazuh server nodes
+  # If there is more than one Wazuh server
+  # node, each one must have a node_type
+  server:
+    - name: wazuh-1
+      ip: "<wazuh-manager-ip>"
+    #  node_type: master
+    #- name: wazuh-2
+    #  ip: "<wazuh-manager-ip>"
+    #  node_type: worker
+    #- name: wazuh-3
+    #  ip: "<wazuh-manager-ip>"
+    #  node_type: worker
+
+  # Wazuh dashboard nodes
+  dashboard:
+    - name: dashboard
+      ip: "<dashboard-node-ip>"
+```
+
+- Run the assistant with option `--generate-config-files` to generate the wazuh cluster key, certs, and pass. You can find these in `./wazuh-install-files.tar`
+
+```bash
+bash wazuh-install.sh --generate-config-files
+```
+
+2. Wazuh indexer nodes installation
+
+- Download the wazuh installation assistant
+
+```bash
+curl -sO https://packages.wazuh.com/4.7/wazuh-install.sh
+```
+
+- Run the assistant with the option `--wazuh-indexer` and the node name to install and configure the wazuh indexer.
+  - Node must be the same one used in `config.yml` for the initial configuration.
+  - **_NOTE_**: Make sure that a copy of `wazuh-install-files.tar`,created during the initial config is place in your working dir.
+  - Repeat this stage of installation process for every wazuh indexer node in your cluster
+
+```bash
+bash wazuh-install.sh --wazuh-indexer node-1
+```
+
+3. Cluster initialization
+
+- Run the assistant with option `--start-cluster` on any wazuh indexer node to load the new cert info and start the cluster
+
+```bash
+bash wazuh-install.sh --start-cluster
+```
+
+- **_NOTE_**: Run once only, no need to run the command on every node.
+
+4. Test the cluster installation
+
+- Run the following command to get _admin_ pass.
+
+```bash
+tar -axf wazuh-install-files.tar wazuh-install-files/wazuh-passwords.txt -O | grep -P "\'admin\'" -A 1
+```
+
+- Run the following command to confirm that the installation is successful.
+  - Replace `<ADMIN_PASSWORD>` and `<WAZUH_INDEXER_IP>`
+
+```bash
+curl -k -u admin:<ADMIN_PASSWORD> https://<WAZUH_INDEXER_IP>:9200
+```
+
+output:
+
+```json
+{
+  "name": "node-1",
+  "cluster_name": "wazuh-cluster",
+  "cluster_uuid": "095jEW-oRJSFKLz5wmo5PA",
+  "version": {
+    "number": "7.10.2",
+    "build_type": "rpm",
+    "build_hash": "db90a415ff2fd428b4f7b3f800a51dc229287cb4",
+    "build_date": "2023-06-03T06:24:25.112415503Z",
+    "build_snapshot": false,
+    "lucene_version": "9.6.0",
+    "minimum_wire_compatibility_version": "7.10.0",
+    "minimum_index_compatibility_version": "7.0.0"
+  },
+  "tagline": "The OpenSearch Project: https://opensearch.org/"
+}
+```
+
+- To check if the cluster is working correctly, run this command
+
+```bash
+curl -k -u admin:<ADMIN_PASSWORD> https://<WAZUH_INDEXER_IP>:9200/_cat/nodes?v
+```
+
+#### Manual
+
+- Refer to this [links](https://documentation.wazuh.com/current/installation-guide/wazuh-indexer/step-by-step.html)
+
+### Server
+
+#### Assistant
+
+**Wazuh server cluster installation**
+
+1. Download the wazuh installation assistant
+
+```bash
+curl -sO https://packages.wazuh.com/4.7/wazuh-install.sh
+```
+
+2. Run the assistant with the option `--wazuh-server` followed by the node name to install the wazuh server.
+
+- The node name must be the same one used in `config.yml` for the initial config.
+- **_NOTE_**: Make sure to copy the `wazuh-install-files.tar`, created during the initial config step, is placed in your working dir.
+
+```bash
+bash wazuh-install.sh --wazuh-server wazuh-1
+```
+
+3. The server is successfully installed.
+
+- for the single-node cluster, **_proceed_**
+- for multiple-node cluster, **_repeat_** this process
+
+#### Manual
+
+- Refer to this [links](https://documentation.wazuh.com/current/installation-guide/wazuh-server/step-by-step.html)
+
+### Dashboard
+
+**Wazuh dahsboard installation**
+
+1. Download the wazuh installation assistant
+
+```bash
+curl -sO https://packages.wazuh.com/4.7/wazuh-install.sh
+```
+
+2. Run the assistant with the option `--wazuh-dashboard` and the node name to install and configure the dashboard.
+
+- The node name must be the same one used in `config.yml` for the initial config.
+- **_NOTE_**: Make sure to copy the `wazuh-install-files.tar`, created during the initial config step, is placed in your working dir.
+
+```bash
+bash wazuh-install.sh --wazuh-dashboard dashboard
+```
+
+- The default web UI port is `443`
+- You can change this port using the optional param `-p|--port <port_number>`
+- Recommended ports are `88443`, `8444`, `8888`, and `9000`
+
+output:
+
+```bash
+INFO: --- Summary ---
+INFO: You can access the web interface https://<wazuh-dashboard-ip>
+   User: admin
+   Password: <ADMIN_PASSWORD>
+
+INFO: Installation finished.
+```
+
+3. You have now installed and configure the dashboard.
+
+- All passwords generated by the wazuh installation assistant can be found in the `wazuh-password.txt` inside `wazuh-install-files.tar`
+- To print, run the following command:
+
+```bash
+tar -O -xvf wazuh-install-files.tar wazuh-install-files/wazuh-passwords.txt
+```
+
+4. Access the wazuh web UI using your credentials
+
+```
+URL: https://<wazuh-dahsboard-ip>
+Username: admin
+Password: <ADMIN_PASSWORD>
+```
+
+#### Manual
+
+- Refer to this [links](https://documentation.wazuh.com/current/installation-guide/wazuh-dashboard/step-by-step.html)
+
+### Agent
+
+- There are 6 options to install Wazuh agent manually, which are:
+
+  - [Linux](https://documentation.wazuh.com/current/installation-guide/wazuh-agent/wazuh-agent-package-linux.html)
+  - [Windows](https://documentation.wazuh.com/current/installation-guide/wazuh-agent/wazuh-agent-package-windows.html)
+  - [MacOs](https://documentation.wazuh.com/current/installation-guide/wazuh-agent/wazuh-agent-package-macos.html)
+  - [Solaris](https://documentation.wazuh.com/current/installation-guide/wazuh-agent/wazuh-agent-package-solaris.html)
+  - [AIX](https://documentation.wazuh.com/current/installation-guide/wazuh-agent/wazuh-agent-package-aix.html)
+  - [Hp-UX](https://documentation.wazuh.com/current/installation-guide/wazuh-agent/wazuh-agent-package-hpux.html)
+
+- The easiest way to install Wazuh agent is by using the dashboard
+
+![deploy new agent from ui](https://firebasestorage.googleapis.com/v0/b/test-agent-nwfy.appspot.com/o/deploy-new-agent-from-ui1.png?alt=media&token=737c47d9-d260-41bd-a693-d7ad196f468b)
+
+- Then follow the steps shown
+
+![deploy new agent from ui options](https://firebasestorage.googleapis.com/v0/b/test-agent-nwfy.appspot.com/o/deploy-new-agent-from-ui-options1.png?alt=media&token=4674a851-bbb1-40f3-b66f-a6c60e7acd85)
